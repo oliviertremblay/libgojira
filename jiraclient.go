@@ -32,6 +32,10 @@ type Options struct {
 
 var options Options
 
+func SetOptions(opts Options) {
+	options = opts
+}
+
 //Worker object in charge of communicating with Jira, wrapper to the API
 type JiraClient struct {
 	client       *http.Client
@@ -43,7 +47,7 @@ func NewJiraClient(options Options) *JiraClient {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: options.NoCheckSSL},
 	}
-
+	options.Verbose = true
 	client := &http.Client{Transport: tr}
 	return &JiraClient{client, options.User, options.Passwd, options.Server}
 
@@ -258,10 +262,9 @@ func NewIssueFromIface(obj interface{}) (*Issue, error) {
 	if err != nil {
 		return nil, err
 	}
-	parentJS, err := jsonWalker("fields/parent/key", obj)
-	if err != nil {
-		return nil, err
-	}
+
+	//Is optional
+	parentJS, _ := jsonWalker("fields/parent/key", obj)
 	var parent string
 	parent, _ = parentJS.(string)
 	if err != nil {
@@ -271,18 +274,11 @@ func NewIssueFromIface(obj interface{}) (*Issue, error) {
 		parent = fmt.Sprintf(" of %s", parent)
 	}
 
-	descriptionjs, err := jsonWalker("fields/description", obj)
-	if err != nil {
-		return nil, err
-	}
-	statusjs, err := jsonWalker("fields/status/name", obj)
-	if err != nil {
-		return nil, err
-	}
-	assigneejs, err := jsonWalker("fields/assignee/name", obj)
-	if err != nil {
-		return nil, err
-	}
+	//Following three things are optional
+	descriptionjs, _ := jsonWalker("fields/description", obj)
+	statusjs, _ := jsonWalker("fields/status/name", obj)
+	assigneejs, _ := jsonWalker("fields/assignee/name", obj)
+
 	ok, ok2, ok3 := true, true, true
 	issue.Key, ok = key.(string)
 	issue.Parent = parent
