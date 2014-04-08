@@ -41,6 +41,7 @@ type JiraClient struct {
 	client       *http.Client
 	User, Passwd string
 	Server       string
+	options      Options
 }
 
 func NewJiraClient(options Options) *JiraClient {
@@ -49,7 +50,7 @@ func NewJiraClient(options Options) *JiraClient {
 	}
 	options.Verbose = true
 	client := &http.Client{Transport: tr}
-	return &JiraClient{client, options.User, options.Passwd, options.Server}
+	return &JiraClient{client, options.User, options.Passwd, options.Server, options}
 
 }
 
@@ -59,7 +60,7 @@ func (jc *JiraClient) AddComment(issueKey string, comment string) (err error) {
 		return err
 	}
 	url := fmt.Sprintf("%s/%s/comment", jc.issueUrl(), issueKey)
-	if options.Verbose {
+	if jc.options.Verbose {
 		fmt.Println(url)
 	}
 	r, err := jc.Post(url, "application/json", bytes.NewBuffer(b))
@@ -101,7 +102,7 @@ func (jc *JiraClient) GetComments(issueKey string) (err error) {
 }
 
 func (jc *JiraClient) printRespErr(res *http.Response, err error) error {
-	if options.Verbose {
+	if jc.options.Verbose {
 		fmt.Println("Status code: ", res.StatusCode)
 	}
 	s, _ := ioutil.ReadAll(res.Body)
@@ -124,7 +125,7 @@ func (jc *JiraClient) DelAttachment(issueKey string, att_name string) (err error
 			if res.StatusCode == 403 {
 				return &JiraClientError{"Unauthorized"}
 			}
-			if options.Verbose {
+			if jc.options.Verbose {
 				fmt.Println(res.StatusCode)
 				sb, _ := ioutil.ReadAll(res.Body)
 				fmt.Println(string(sb))
@@ -208,7 +209,7 @@ func (ja *JiraClient) Search(searchoptions *SearchOptions) ([]*Issue, error) {
 		jqlstr = strings.Replace(searchoptions.JQL, " ", "+", -1)
 	}
 	url := fmt.Sprintf("https://%s/rest/api/2/search?jql=%s&fields=*all", ja.Server, jqlstr)
-	if options.Verbose {
+	if ja.options.Verbose {
 		fmt.Println(url)
 	}
 	resp, err := ja.Get(url)
@@ -593,9 +594,12 @@ func (jc *JiraClient) GetTaskType(friendlyname string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if taskname, ok := projmap[options.Project][friendlyname]; ok {
+	if taskname, ok := projmap[jc.options.Project][friendlyname]; ok {
 		return taskname, nil
 	} else {
+		if jc.options.Verbose {
+			fmt.Println(projmap[jc.options.Project])
+		}
 		return "", &JiraClientError{fmt.Sprintf("Task name not found for friendly name %s.", friendlyname)}
 	}
 }
@@ -621,7 +625,7 @@ func (jc *JiraClient) CreateTask(project string, nto *NewTaskOptions) error {
 	if err != nil {
 		return err
 	}
-	if options.Verbose {
+	if jc.options.Verbose {
 		fmt.Println(string(iss))
 	}
 	resp, err := jc.Post(fmt.Sprintf("https://%s/rest/api/2/issue", jc.Server), "application/json", bytes.NewBuffer(iss))

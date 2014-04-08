@@ -135,7 +135,7 @@ func (i *Issue) Assign(author string, jc *JiraClient) error {
 	if err != nil {
 		return err
 	}
-	resp, err := jc.Put(fmt.Sprintf("https://%s/rest/api/2/issue/%s/assignee", Server, i.Key), "application/json", bytes.NewBuffer(js))
+	resp, err := jc.Put(fmt.Sprintf("https://%s/rest/api/2/issue/%s/assignee", jc.options.Server, i.Key), "application/json", bytes.NewBuffer(js))
 	if err != nil {
 		return err
 	}
@@ -249,7 +249,7 @@ func (i *Issue) doTransitionWithFields(id string, fields interface{}, jc *JiraCl
 	if err != nil {
 		return err
 	}
-	resp, err := jc.Post(fmt.Sprintf("https://%s/rest/api/2/issue/%s/transitions", Server, i.Key), "application/json", bytes.NewBuffer(putJs))
+	resp, err := jc.Post(fmt.Sprintf("https://%s/rest/api/2/issue/%s/transitions", jc.options.Server, i.Key), "application/json", bytes.NewBuffer(putJs))
 	if resp.StatusCode != 204 {
 		s, _ := ioutil.ReadAll(resp.Body)
 		return &IssueError{fmt.Sprintf("%d: %s", resp.StatusCode, string(s))}
@@ -263,7 +263,7 @@ func (i *Issue) doTransition(id string, jc *JiraClient) error {
 }
 
 func (i *Issue) getTransitionId(transition string, jc *JiraClient) (string, error) {
-	resp, err := jc.Get(fmt.Sprintf("https://%s/rest/api/2/issue/%s/transitions", Server, i.Key))
+	resp, err := jc.Get(fmt.Sprintf("https://%s/rest/api/2/issue/%s/transitions", jc.options.Server, i.Key))
 	if err != nil {
 		return "", err
 	}
