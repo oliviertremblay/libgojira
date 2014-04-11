@@ -389,6 +389,21 @@ func (jc *JiraClient) GetIssue(issueKey string) (*Issue, error) {
 	return iss, nil
 }
 
+func tagsFromStringSlice(tags []string) []interface{} {
+	tags_obj := make([]interface{}, 0)
+	for _, tag := range tags {
+		tags_obj = append(tags_obj, map[string]interface{}{"add": tag})
+	}
+	return tags_obj
+}
+
+func (jc *JiraClient) AddTags(issuekey string, tags []string) error {
+	postjs := map[string]interface{}{"labels": tagsFromStringSlice(tags)}
+
+	return jc.UpdateIssue(issuekey, postjs)
+
+}
+
 func (jc *JiraClient) UpdateIssue(issuekey string, postjs map[string]interface{}) error {
 	postdata, err := json.Marshal(map[string]interface{}{"update": postjs})
 
@@ -620,6 +635,32 @@ func (jc *JiraClient) CreateTask(project string, nto *NewTaskOptions) error {
 	if nto.Parent != nil {
 		fields["parent"] = map[string]interface{}{"key": nto.Parent.Key}
 	}
+	if nto.Description != "" {
+		fields["description"] = nto.Description
+	}
+
+	if len(nto.Labels) > 0 {
+		fields["labels"] = nto.Labels //tagsFromStringSlice(nto.Labels)
+	}
+	for _, field := range nto.Fields {
+		split_f := strings.Split(field, "=")
+		if len(split_f) < 2 {
+			continue
+		}
+		fname := split_f[0]
+		fval := strings.Join(split_f[1:], "=")
+		fields[fname] = fval
+	}
+	for _, field := range nto.SelectFields {
+		split_f := strings.Split(field, "=")
+		if len(split_f) < 2 {
+			continue
+		}
+		fname := split_f[0]
+		fval := strings.Join(split_f[1:], "=")
+		fields[fname] = map[string]interface{}{"value": fval}
+	}
+
 	iss, err := json.Marshal(map[string]interface{}{
 		"fields": fields})
 	if err != nil {
@@ -663,4 +704,8 @@ type NewTaskOptions struct {
 	Summary          string
 	OriginalEstimate string
 	Parent           *Issue
+	Fields           []string
+	SelectFields     []string
+	Labels           []string
+	Description      string
 }
