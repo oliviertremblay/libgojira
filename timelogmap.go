@@ -10,6 +10,7 @@ import (
 
 type TimeLog struct {
 	Key     string
+	LogId   string
 	Date    time.Time
 	Seconds int
 	Issue   *Issue
@@ -53,10 +54,11 @@ func (tl TimeLog) Percentage() string {
 
 func (tlm TimeLogMap) String() string {
 	buf := bytes.NewBuffer([]byte{})
-	for moment, timelogs := range tlm {
-		buf.WriteString(fmt.Sprintf("  %v\n", moment))
-		for _, timelog := range timelogs {
-			buf.WriteString(fmt.Sprintf("    %v\n", timelog.PrettySeconds()))
+	keys := tlm.GetSortedKeys()
+	for _, k := range keys {
+		buf.WriteString(fmt.Sprintf("  %v\n", k))
+		for _, timelog := range tlm[k] {
+			buf.WriteString(fmt.Sprintf("    %v (# %s by %s) \n", timelog.PrettySeconds(), timelog.LogId, timelog.Author))
 		}
 	}
 	return buf.String()
@@ -110,6 +112,8 @@ func TimeLogForIssue(issue *Issue, issue_json interface{}) TimeLogMap {
 		for _, log := range logs {
 			//We got good json and it's by our user
 			authorjson, _ := jsonWalker("author/name", log)
+			logidjson, _ := jsonWalker("id", log)
+			logid, _ := logidjson.(string)
 			if author, ok := authorjson.(string); ok {
 				dsjson, _ := jsonWalker("started", log)
 				if date_string, ok := dsjson.(string); ok {
@@ -122,7 +126,7 @@ func TimeLogForIssue(issue *Issue, issue_json interface{}) TimeLogMap {
 					if _, ok := logs_for_times[date]; !ok {
 						logs_for_times[date] = make([]TimeLog, 0)
 					}
-					logs_for_times[date] = append(logs_for_times[date], TimeLog{issue.Key, date, seconds, issue, author})
+					logs_for_times[date] = append(logs_for_times[date], TimeLog{issue.Key, logid, date, seconds, issue, author})
 
 				}
 			}

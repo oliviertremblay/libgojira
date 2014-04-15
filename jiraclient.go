@@ -84,12 +84,20 @@ func numOnly(s string) (string, error) {
 	return result, nil
 }
 
+func (jc *JiraClient) DelWorkLog(issueKey string, worklog_id string) (err error) {
+	return jc.delById("worklog", issueKey, worklog_id)
+}
+
 func (jc *JiraClient) DelComment(issueKey string, comment_id string) (err error) {
-	cid, err := numOnly(comment_id)
+	return jc.delById("comment", issueKey, comment_id)
+}
+
+func (jc *JiraClient) delById(issueobject, issuekey, id string) (err error) {
+	cid, err := numOnly(id)
 	if err != nil {
-		return &JiraClientError{"Bad comment id"}
+		return &JiraClientError{fmt.Sprintf("Bad %s id", issueobject)}
 	}
-	r, err := jc.Delete(fmt.Sprintf("%s/%s/comment/%s", jc.issueUrl(), issueKey, cid), "", nil)
+	r, err := jc.Delete(fmt.Sprintf("%s/%s/%s/%s", jc.issueUrl(), issuekey, issueobject, cid), "", nil)
 	if err != nil {
 		return jc.printRespErr(r, err)
 	}
@@ -183,6 +191,10 @@ type SearchOptions struct {
 	Open          bool   //Limit search to open issues
 	Issue         string //Limit search to a single issue
 	JQL           string //Pure JQL query, has precedence over any other option
+	Type          []string
+	NotType       []string
+	Status        []string
+	NotStatus     []string
 }
 
 func (ja *JiraClient) Search(searchoptions *SearchOptions) ([]*Issue, error) {
@@ -202,6 +214,18 @@ func (ja *JiraClient) Search(searchoptions *SearchOptions) ([]*Issue, error) {
 		if searchoptions.Project != "" {
 			searchoptions.Project = strings.Replace(searchoptions.Project, " ", "+", -1)
 			jql = append(jql, fmt.Sprintf("project+=+'%s'", searchoptions.Project))
+		}
+		if len(searchoptions.Type) > 0 {
+			jql = append(jql, strings.Replace(fmt.Sprintf("type+in+('%s')", strings.Join(searchoptions.Type, "','")), " ", "+", -1))
+		}
+		if len(searchoptions.NotType) > 0 {
+			jql = append(jql, strings.Replace(fmt.Sprintf("type+not+in+(%s)", strings.Join(searchoptions.NotType, ",")), " ", "+", -1))
+		}
+		if len(searchoptions.Status) > 0 {
+			jql = append(jql, strings.Replace(fmt.Sprintf("status+in+('%s')", strings.Join(searchoptions.Status, "','")), " ", "+", -1))
+		}
+		if len(searchoptions.NotStatus) > 0 {
+			jql = append(jql, strings.Replace(fmt.Sprintf("status+not+in+('%s')", strings.Join(searchoptions.NotStatus, "','")), " ", "+", -1))
 		}
 
 		jqlstr = strings.Join(jql, "+AND+") + "+order+by+rank"
