@@ -2,8 +2,10 @@ package libgojira
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os/exec"
 	"regexp"
@@ -25,6 +27,7 @@ type Issue struct {
 	TimeSpent         float64
 	Comments          CommentList
 	TimeLog           TimeLogMap
+	Updated           string
 }
 
 func (i *Issue) QRCodeBase64() string {
@@ -40,6 +43,12 @@ func (i *Issue) QRCodeBase64() string {
 		panic(e)
 	}
 	return string(b2)
+}
+
+func (i *Issue) ETag() string {
+	hash := sha256.New()
+	io.WriteString(hash, i.Updated)
+	return string(hash.Sum(nil))
 }
 
 type CommentList []*Comment
@@ -85,7 +94,7 @@ func (ifl IssueFileList) String() string {
 func (i *Issue) String() string {
 	p := ""
 	if i.Parent != "" {
-		p = fmt.Sprintf("%s", i.Parent)
+		p = fmt.Sprintf(" of %s", i.Parent)
 	}
 	return fmt.Sprintf("%s (%s%s): %s", i.Key, i.Type, p, i.Summary)
 }
@@ -102,7 +111,9 @@ func (i *Issue) PrettySprint() string {
 	sa = append(sa, fmt.Sprintln(fmt.Sprintf("Jira URL: %s", i.Url())))
 	sa = append(sa, fmt.Sprintln(fmt.Sprintf("Status: %s", i.Status)))
 	sa = append(sa, fmt.Sprintln(fmt.Sprintf("Assignee: %s", i.Assignee)))
-
+	sa = append(sa, fmt.Sprintln(fmt.Sprintf("Original time estimate: %s", PrettySeconds(int(i.OriginalEstimate)))))
+	sa = append(sa, fmt.Sprintln(fmt.Sprintf("Time spent: %s", PrettySeconds(int(i.TimeSpent)))))
+	sa = append(sa, fmt.Sprintln(fmt.Sprintf("Remaining time estimated: %s", PrettySeconds(int(i.RemainingEstimate)))))
 	r, _ := regexp.Compile("[*]([^*]*)[*]")
 	splitdesc := strings.Split(i.Description, "\n")
 	for k, v := range splitdesc {

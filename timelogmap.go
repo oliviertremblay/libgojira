@@ -2,7 +2,9 @@ package libgojira
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+
 	"sort"
 	"text/template"
 	"time"
@@ -65,6 +67,19 @@ func (tlm TimeLogMap) String() string {
 }
 
 type TimeLogMap map[time.Time][]TimeLog
+
+func (tlm TimeLogMap) MarshalJSON() ([]byte, error) {
+	mst := map[string]string{}
+	for k, v := range tlm {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return nil, err
+		}
+		mst[fmt.Sprintf("%d", k.Unix())] = string(b)
+	}
+	return json.Marshal(mst)
+}
+
 type TimeSlice []time.Time
 
 func (ts TimeSlice) Len() int {

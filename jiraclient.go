@@ -12,9 +12,13 @@ import (
 	"log"
 	"mime/multipart"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/garyburd/go-oauth/oauth"
+	"github.com/hoisie/mustache"
 )
 
 //Options available to the app.
@@ -24,8 +28,8 @@ type Options struct {
 	NoCheckSSL bool   `short:"n" long:"no-check-ssl" description:"Don't check ssl validity"`
 	UseStdIn   bool   `long:"stdin"`
 
-	Verbose bool   `short:"v" long:"verbose" description:"Be verbose"`
-	Project string `short:"j" long:"project"`
+	Verbose  bool     `short:"v" long:"verbose" description:"Be verbose"`
+	Projects []string `short:"j" long:"project"`
 
 	Server string `short:"s" long:"server" description:"Jira server (just the domain name)"`
 }
@@ -42,16 +46,21 @@ type JiraClient struct {
 	User, Passwd string
 	Server       string
 	options      Options
+	OAuthCookie  *http.Cookie
 }
 
 func NewJiraClient(options Options) *JiraClient {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: options.NoCheckSSL},
 	}
-	options.Verbose = true
+	//	options.Verbose = true
 	client := &http.Client{Transport: tr}
-	return &JiraClient{client, options.User, options.Passwd, options.Server, options}
+	return &JiraClient{client, options.User, options.Passwd, options.Server, options, nil}
 
+}
+
+func (jc *JiraClient) GetClient() *http.Client {
+	return jc.client
 }
 
 func (jc *JiraClient) AddComment(issueKey string, comment string) (err error) {
@@ -186,11 +195,11 @@ func (jc *JiraClient) Upload(issueKey string, file string) (err error) {
 
 //Represents search options to Jira
 type SearchOptions struct {
-	Project       string //Limit search to a specific project
-	CurrentSprint bool   //Limit search to stories in current sprint
-	Open          bool   //Limit search to open issues
-	Issue         string //Limit search to a single issue
-	JQL           string //Pure JQL query, has precedence over any other option
+	Projects      []string //Limit search to a specific project
+	CurrentSprint bool     //Limit search to stories in current sprint
+	Open          bool     //Limit search to open issues
+	Issue         string   //Limit search to a single issue
+	JQL           string   //Pure JQL query, has precedence over any other option
 	Type          []string
 	NotType       []string
 	Status        []string
@@ -211,9 +220,9 @@ func (ja *JiraClient) Search(searchoptions *SearchOptions) ([]*Issue, error) {
 			searchoptions.Issue = strings.Replace(searchoptions.Issue, " ", "+", -1)
 			jql = append(jql, fmt.Sprintf("issue+=+'%s'+or+parent+=+'%s'", searchoptions.Issue, searchoptions.Issue))
 		}
-		if searchoptions.Project != "" {
-			searchoptions.Project = strings.Replace(searchoptions.Project, " ", "+", -1)
-			jql = append(jql, fmt.Sprintf("project+=+'%s'", searchoptions.Project))
+		if len(searchoptions.Projects) > 0 {
+			searchoptions.Projects = searchoptions.Projects //strings.Replace(strings.searchoptions.Project, " ", "+", -1)
+			jql = append(jql, fmt.Sprintf("project+in+('%s')", strings.Replace(strings.Join(searchoptions.Projects, "','"), " ", "+", -1)))
 		}
 		if len(searchoptions.Type) > 0 {
 			jql = append(jql, strings.Replace(fmt.Sprintf("type+in+('%s')", strings.Join(searchoptions.Type, "','")), " ", "+", -1))
@@ -238,13 +247,18 @@ func (ja *JiraClient) Search(searchoptions *SearchOptions) ([]*Issue, error) {
 	}
 	resp, err := ja.Get(url)
 	if err != nil {
-		fmt.Println(resp.StatusCode)
-		fmt.Println(ioutil.ReadAll(resp.Body))
+		if resp != nil {
+			fmt.Println(resp.StatusCode)
+			b, _ := ioutil.ReadAll(resp.Body)
+			fmt.Println(string(b))
+		}
 		return nil, err
 	}
 	if resp.StatusCode >= 300 {
 		fmt.Println(resp.StatusCode)
-		fmt.Println(ioutil.ReadAll(resp.Body))
+		b, _ := ioutil.ReadAll(resp.Body)
+		fmt.Println(string(b))
+
 		return nil, &JiraClientError{resp.Status}
 	}
 
@@ -294,9 +308,6 @@ func NewIssueFromIface(obj interface{}) (*Issue, error) {
 	parent, _ = parentJS.(string)
 	if err != nil {
 		parent = ""
-	}
-	if parent != "" {
-		parent = fmt.Sprintf(" of %s", parent)
 	}
 
 	//Following three things are optional
@@ -488,7 +499,15 @@ func (jc *JiraClient) newRequest(verb, url, mimetype string, rdr io.Reader) (*ht
 	if mimetype != "" {
 		req.Header.Add("Content-Type", mimetype)
 	}
-	req.SetBasicAuth(jc.User, jc.Passwd)
+	if jc.OAuthCookie == nil {
+		req.SetBasicAuth(jc.User, jc.Passwd)
+	} else {
+		var creds oauth.Credentials
+		json.Unmarshal([]byte(jc.OAuthCookie.Value), creds)
+		ocl := &oauth.Client{creds, "http://jira.gammae.com/jira/plugins/servlet/oauth/request-token", "http://jira.gammae.com/jira/plugins/servlet/oauth/access-token", "http://jira.gammae.com/jira/plugins/servlet/oauth/authorize"}
+		parsedurl, _ := neturl.Parse(url)
+		req.Header.Set("Authorization", ocl.AuthorizationHeader(&creds, verb, parsedurl, nil))
+	}
 	return req, nil
 }
 
@@ -574,6 +593,9 @@ func (jc *JiraClient) GetTaskTypes() (map[string]map[string]string, error) {
 				}
 			}
 		}
+		if jc.options.Verbose {
+			fmt.Println(projmap)
+		}
 		return projmap, nil
 	}
 
@@ -633,14 +655,17 @@ func (jc *JiraClient) GetTaskType(friendlyname string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if taskname, ok := projmap[jc.options.Project][friendlyname]; ok {
+
+	if taskname, ok := projmap[jc.options.Projects[0]][friendlyname]; ok {
 		return taskname, nil
 	} else {
 		if jc.options.Verbose {
-			fmt.Println(projmap[jc.options.Project])
+			fmt.Println(projmap[jc.options.Projects[0]])
 		}
-		return "", &JiraClientError{fmt.Sprintf("Task name not found for friendly name %s.", friendlyname)}
+
 	}
+
+	return "", &JiraClientError{fmt.Sprintf("Task name not found for friendly name %s.", friendlyname)}
 }
 
 func (jc *JiraClient) CreateTask(project string, nto *NewTaskOptions) error {
@@ -652,6 +677,7 @@ func (jc *JiraClient) CreateTask(project string, nto *NewTaskOptions) error {
 	if err != nil {
 		return err
 	}
+
 	fields := map[string]interface{}{
 		"summary":   nto.Summary,
 		"project":   map[string]interface{}{"key": projmap[project].Key},
@@ -665,6 +691,9 @@ func (jc *JiraClient) CreateTask(project string, nto *NewTaskOptions) error {
 
 	if len(nto.Labels) > 0 {
 		fields["labels"] = nto.Labels //tagsFromStringSlice(nto.Labels)
+	}
+	if nto.OriginalEstimate != "" {
+		fields["timetracking"] = map[string]string{"originalEstimate": nto.OriginalEstimate}
 	}
 	for _, field := range nto.Fields {
 		split_f := strings.Split(field, "=")
@@ -715,6 +744,20 @@ func (jc *JiraClient) CreateTask(project string, nto *NewTaskOptions) error {
 
 func (jc *JiraClient) issueUrl() string {
 	return fmt.Sprintf("https://%s/rest/api/2/issue", jc.Server)
+}
+
+func PrintHtml(issues []*Issue) ([]byte, error) {
+	var bs []byte
+	out := bytes.NewBuffer(bs)
+	var tmpl *mustache.Template
+	tmpl, err := mustache.ParseString(defaultTemplate)
+
+	if err != nil {
+		return out.Bytes(), err
+	}
+	fmt.Fprintln(out, tmpl.Render(map[string]interface{}{"Issues": issues}))
+	return out.Bytes(), err
+
 }
 
 type JiraProject struct {
