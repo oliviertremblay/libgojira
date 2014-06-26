@@ -28,6 +28,7 @@ type Issue struct {
 	Comments          CommentList
 	TimeLog           TimeLogMap
 	Updated           string
+	Points            string
 }
 
 func (i *Issue) QRCodeBase64() string {

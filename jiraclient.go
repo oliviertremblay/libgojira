@@ -324,26 +324,47 @@ func NewIssueFromIface(obj interface{}) (*Issue, error) {
 	issue.Status, _ = statusjs.(string)
 	issue.Assignee, _ = assigneejs.(string)
 	issue.Files = getFileListFromIface(obj)
+	issue.Points, _ = grabCustomField("customfield_10003", obj)
 	if !(ok && ok2 && ok3) {
 		return nil, newIssueError("Bad Issue")
 	}
+	if issue.Type != "Sub-task" {
+		OriginalEstimateJs, err := jsonWalker("fields/aggregatetimeoriginalestimate", obj)
+		if err != nil {
+			return nil, err
+		}
+		TimeSpentJs, err := jsonWalker("fields/aggregatetimespent", obj)
+		if err != nil {
+			return nil, err
+		}
 
-	OriginalEstimateJs, err := jsonWalker("fields/timeoriginalestimate", obj)
-	if err != nil {
-		return nil, err
-	}
-	RemainingEstimateJs, err := jsonWalker("fields/timeremainingestimate", obj)
-	if err != nil {
-		return nil, err
-	}
-	TimeSpentJs, err := jsonWalker("fields/timespent", obj)
-	if err != nil {
-		return nil, err
-	}
+		RemainingEstimateJs, err := jsonWalker("fields/aggregatetimeestimate", obj)
+		if err != nil {
+			return nil, err
+		}
 
-	issue.OriginalEstimate, _ = OriginalEstimateJs.(float64)
-	issue.RemainingEstimate, _ = RemainingEstimateJs.(float64)
-	issue.TimeSpent, _ = TimeSpentJs.(float64)
+		issue.OriginalEstimate, _ = OriginalEstimateJs.(float64)
+		issue.TimeSpent, _ = TimeSpentJs.(float64)
+		issue.RemainingEstimate, _ = RemainingEstimateJs.(float64)
+
+	} else {
+		OriginalEstimateJs, err := jsonWalker("fields/timeoriginalestimate", obj)
+		if err != nil {
+			return nil, err
+		}
+		RemainingEstimateJs, err := jsonWalker("fields/timeremainingestimate", obj)
+		if err != nil {
+			return nil, err
+		}
+		TimeSpentJs, err := jsonWalker("fields/timespent", obj)
+		if err != nil {
+			return nil, err
+		}
+
+		issue.OriginalEstimate, _ = OriginalEstimateJs.(float64)
+		issue.RemainingEstimate, _ = RemainingEstimateJs.(float64)
+		issue.TimeSpent, _ = TimeSpentJs.(float64)
+	}
 	issue.TimeLog = TimeLogForIssue(issue, obj)
 	comms, err := jsonWalker("fields/comment/comments", obj)
 	if err == nil {
@@ -361,6 +382,20 @@ func NewIssueFromIface(obj interface{}) (*Issue, error) {
 	}
 
 	return issue, nil
+}
+
+func grabCustomField(fieldname string, obj interface{}) (string, error) {
+	ifields, err := jsonWalker("fields", obj)
+	if err != nil {
+		return "", err
+	}
+	fields := ifields.(map[string]interface{})
+	for k, v := range fields {
+		if k == fieldname {
+			return fmt.Sprintf("%v", v), nil
+		}
+	}
+	return "", errors.New("Field not found")
 }
 
 func commentsFromIFace(obj interface{}) CommentList {
