@@ -29,10 +29,11 @@ type Issue struct {
 	TimeLog           TimeLogMap
 	Updated           string
 	Points            string
+	SubTasks          []*Issue
 }
 
 func (i *Issue) QRCodeBase64() string {
-	cmd := exec.Command("qrencode", "-o", "-", "-s", "4", i.Url())
+	cmd := exec.Command("qrencode", "-o", "-", "-s", "2", i.Url())
 	b, e := cmd.Output()
 	if e != nil {
 		panic(e)

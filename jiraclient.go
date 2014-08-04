@@ -12,13 +12,13 @@ import (
 	"log"
 	"mime/multipart"
 	"net/http"
-	neturl "net/url"
+	"net/http/cookiejar"
 	"os"
 	"regexp"
 	"strings"
 
-	"github.com/garyburd/go-oauth/oauth"
 	"github.com/hoisie/mustache"
+	"thezombie.net/oauth1a"
 )
 
 //Options available to the app.
@@ -31,7 +31,8 @@ type Options struct {
 	Verbose  bool     `short:"v" long:"verbose" description:"Be verbose"`
 	Projects []string `short:"j" long:"project"`
 
-	Server string `short:"s" long:"server" description:"Jira server (just the domain name)"`
+	Server          string `short:"s" long:"server" description:"Jira server (just the domain name)"`
+	IncludeSubtasks bool   `short:"a" long:"subtasks" description:"When grabbing an issue, also grab its subtasks"`
 }
 
 var options Options
@@ -46,7 +47,8 @@ type JiraClient struct {
 	User, Passwd string
 	Server       string
 	options      Options
-	OAuthCookie  *http.Cookie
+	OAuthCfg     *oauth1a.UserConfig
+	OAuthService *oauth1a.Service
 }
 
 func NewJiraClient(options Options) *JiraClient {
@@ -54,8 +56,13 @@ func NewJiraClient(options Options) *JiraClient {
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: options.NoCheckSSL},
 	}
 	//	options.Verbose = true
-	client := &http.Client{Transport: tr}
-	return &JiraClient{client, options.User, options.Passwd, options.Server, options, nil}
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		log.Println(err)
+	}
+	client := &http.Client{Transport: tr, Jar: jar}
+	return &JiraClient{client, options.User, options.Passwd, options.Server, options, nil, nil}
 
 }
 
@@ -274,7 +281,7 @@ func (ja *JiraClient) Search(searchoptions *SearchOptions) ([]*Issue, error) {
 	}
 	result := []*Issue{}
 	for _, v := range issuesSlice {
-		iss, err := NewIssueFromIface(v)
+		iss, err := ja.NewIssueFromIface(v)
 		if err == nil {
 			result = append(result, iss)
 		}
@@ -287,7 +294,7 @@ func (ja *JiraClient) Search(searchoptions *SearchOptions) ([]*Issue, error) {
 	return result, nil
 }
 
-func NewIssueFromIface(obj interface{}) (*Issue, error) {
+func (jc *JiraClient) NewIssueFromIface(obj interface{}) (*Issue, error) {
 	issue := new(Issue)
 	key, err := jsonWalker("key", obj)
 	if err != nil {
@@ -346,7 +353,19 @@ func NewIssueFromIface(obj interface{}) (*Issue, error) {
 		issue.OriginalEstimate, _ = OriginalEstimateJs.(float64)
 		issue.TimeSpent, _ = TimeSpentJs.(float64)
 		issue.RemainingEstimate, _ = RemainingEstimateJs.(float64)
+		if jc.options.IncludeSubtasks {
+			subtasksJS, err := jsonWalker("fields/subtasks", obj)
+			st := []*Issue{}
+			if subtasks, ok := subtasksJS.([]interface{}); ok && err == nil {
+				for _, subtask := range subtasks {
+					k, _ := jsonWalker("key", subtask)
+					i, _ := jc.GetIssue(k.(string))
+					st = append(st, i)
+				}
+				issue.SubTasks = st
 
+			}
+		}
 	} else {
 		OriginalEstimateJs, err := jsonWalker("fields/timeoriginalestimate", obj)
 		if err != nil {
@@ -452,7 +471,7 @@ func (jc *JiraClient) GetIssue(issueKey string) (*Issue, error) {
 		panic(err)
 	}
 	obj, err := JsonToInterface(resp.Body)
-	iss, err := NewIssueFromIface(obj)
+	iss, err := jc.NewIssueFromIface(obj)
 	if err != nil {
 		return nil, err
 	}
@@ -491,6 +510,10 @@ func (jc *JiraClient) UpdateIssue(issuekey string, postjs map[string]interface{}
 	}
 	log.Println(fmt.Sprintf("Issue %s updated!", issuekey))
 	return nil
+}
+
+func (jc *JiraClient) Client() *http.Client {
+	return jc.client
 }
 
 func (jc *JiraClient) Get(url string) (*http.Response, error) {
@@ -534,14 +557,10 @@ func (jc *JiraClient) newRequest(verb, url, mimetype string, rdr io.Reader) (*ht
 	if mimetype != "" {
 		req.Header.Add("Content-Type", mimetype)
 	}
-	if jc.OAuthCookie == nil {
+	if jc.OAuthCfg == nil {
 		req.SetBasicAuth(jc.User, jc.Passwd)
 	} else {
-		var creds oauth.Credentials
-		json.Unmarshal([]byte(jc.OAuthCookie.Value), creds)
-		ocl := &oauth.Client{creds, "http://jira.gammae.com/jira/plugins/servlet/oauth/request-token", "http://jira.gammae.com/jira/plugins/servlet/oauth/access-token", "http://jira.gammae.com/jira/plugins/servlet/oauth/authorize"}
-		parsedurl, _ := neturl.Parse(url)
-		req.Header.Set("Authorization", ocl.AuthorizationHeader(&creds, verb, parsedurl, nil))
+		jc.OAuthService.Sign(req, jc.OAuthCfg)
 	}
 	return req, nil
 }
@@ -612,8 +631,13 @@ func (jc *JiraClient) GetTaskTypes() (map[string]map[string]string, error) {
 		projmap := map[string]map[string]string{}
 		for _, v := range probjs {
 			projnamejs, _ := jsonWalker("name", v)
+			projkeyjs, _ := jsonWalker("key", v)
+			projkey, _ := projkeyjs.(string)
 			if projname, ok := projnamejs.(string); ok {
 				projmap[projname] = map[string]string{}
+				if projkey != "" {
+					projmap[projkey] = projmap[projname]
+				}
 				issuesjs, _ := jsonWalker("issuetypes", v)
 				if issues, ok := issuesjs.([]interface{}); ok {
 					for _, issuetype := range issues {
@@ -623,6 +647,9 @@ func (jc *JiraClient) GetTaskTypes() (map[string]map[string]string, error) {
 						}
 						if typename, ok := typenamejs.(string); ok {
 							projmap[projname][strings.Replace(strings.ToLower(typename), " ", "-", -1)] = typename
+							//							if projkey != "" {
+							//								projmap[projkey][strings.Replace(strings.ToLower(typename), " ", "-", -1)] = typename
+							//							}
 						}
 					}
 				}
@@ -652,6 +679,9 @@ func (jc *JiraClient) GetProjList() ([]string, error) {
 			result = append(result, p.(map[string]interface{})["key"].(string))
 		}
 	}
+	if jc.options.Verbose {
+		log.Println(result)
+	}
 	return result, nil
 }
 
@@ -678,6 +708,7 @@ func (jc *JiraClient) GetProjects() (map[string]JiraProject, error) {
 			projkey, _ := projkeyjs.(string)
 			projid, _ := projidjs.(string)
 			projmap[projname] = JiraProject{Id: projid, Name: projname, Key: projkey}
+			projmap[projkey] = projmap[projname]
 		}
 	}
 
@@ -810,4 +841,39 @@ type NewTaskOptions struct {
 	SelectFields     []string
 	Labels           []string
 	Description      string
+}
+
+func (jc *JiraClient) ChangeRank(rankthese []string, before_or_after string, target string) error {
+	b := bytes.NewBuffer([]byte{})
+	enc := json.NewEncoder(b)
+	//	keys := make([]string, 0, len(rankthese))
+	//	for _, i := range rankthese {
+	//		keys = append(keys, i.Key)
+	//	}
+	var b_o_f string
+	switch strings.ToLower(before_or_after) {
+	case "before":
+		b_o_f = "rankBeforeKey"
+	case "after":
+		b_o_f = "rankAfterKey"
+	default:
+		return fmt.Errorf("before_or_after needs to be set to either 'before' or 'after'.")
+	}
+	err := enc.Encode(map[string]interface{}{"issueKeys": rankthese, "customFieldId": 10560, b_o_f: target})
+	fmt.Println(b.String())
+	if err != nil {
+		return err
+	}
+	res, err := jc.Put(fmt.Sprintf("https://%s/rest/greenhopper/1.0/api/rank/%s/", jc.Server, before_or_after), "application/json", b)
+	if err != nil {
+		return err
+	}
+	if res.StatusCode >= 400 {
+		msg, err := ioutil.ReadAll(res.Body)
+		if err != nil {
+			return nil
+		}
+		return fmt.Errorf("%s", msg)
+	}
+	return nil
 }
