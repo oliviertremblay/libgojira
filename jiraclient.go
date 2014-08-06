@@ -70,6 +70,35 @@ func (jc *JiraClient) GetClient() *http.Client {
 	return jc.client
 }
 
+type msi map[string]interface{}
+
+type Link struct {
+	Issue string
+
+	LinkReason    string
+	LinkedToIssue string
+	Comment       string
+}
+
+func (jc *JiraClient) Link(link *Link) error {
+	m := msi{"type": msi{"name": link.LinkReason}, "inwardIssue": msi{"key": link.Issue}, "outwardIssue": msi{"key": link.LinkedToIssue}}
+	if link.Comment != "" {
+		m["comment"] = msi{"body": link.Comment}
+	}
+	w := bytes.NewBuffer([]byte{})
+	enc := json.NewEncoder(w)
+	enc.Encode(m)
+	resp, err := jc.Post(fmt.Sprintf("%sLink", jc.issueUrl()), "application/json", w)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode >= 400 {
+		b, _ := ioutil.ReadAll(resp.Body)
+		return fmt.Errorf(string(b))
+	}
+	return nil
+}
+
 func (jc *JiraClient) AddComment(issueKey string, comment string) (err error) {
 	b, err := json.Marshal(map[string]interface{}{"body": comment})
 	if err != nil {
