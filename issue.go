@@ -53,6 +53,20 @@ func (i *Issue) ETag() string {
 	return string(hash.Sum(nil))
 }
 
+func (i *Issue) TaskTransition(jc *JiraClient, transition string, extra_fields msi) error {
+	id, err := i.getTransitionId(transition, jc)
+	if err != nil {
+
+		return err
+	}
+	err = i.doTransitionWithFields(id, extra_fields, jc)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 type CommentList []*Comment
 
 type Comment struct {
