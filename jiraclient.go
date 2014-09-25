@@ -281,45 +281,55 @@ func (ja *JiraClient) Search(searchoptions *SearchOptions) ([]*Issue, error) {
 	if ja.options.Verbose {
 		fmt.Println(url)
 	}
-	resp, err := ja.Get(url)
-	if err != nil {
-		if resp != nil {
+	i := 0
+	result := []*Issue{}
+	for {
+		if options.Verbose {
+			fmt.Println(url + fmt.Sprintf("&startAt=%d", i))
+		}
+		resp, err := ja.Get(url + fmt.Sprintf("&startAt=%d", i))
+		if err != nil {
+			if resp != nil {
+				fmt.Println(resp.StatusCode)
+				b, _ := ioutil.ReadAll(resp.Body)
+				fmt.Println(string(b))
+			}
+			return nil, err
+		}
+		if resp.StatusCode >= 300 {
 			fmt.Println(resp.StatusCode)
 			b, _ := ioutil.ReadAll(resp.Body)
 			fmt.Println(string(b))
+
+			return nil, &JiraClientError{resp.Status}
 		}
-		return nil, err
-	}
-	if resp.StatusCode >= 300 {
-		fmt.Println(resp.StatusCode)
-		b, _ := ioutil.ReadAll(resp.Body)
-		fmt.Println(string(b))
 
-		return nil, &JiraClientError{resp.Status}
-	}
-
-	obj, err := JsonToInterface(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	issues, _ := jsonWalker("issues", obj)
-	issuesSlice, ok := issues.([]interface{})
-
-	if !ok {
-		issuesSlice = []interface{}{}
-	}
-	result := []*Issue{}
-	for _, v := range issuesSlice {
-		iss, err := ja.NewIssueFromIface(v)
-		if err == nil {
-			result = append(result, iss)
-		}
+		obj, err := JsonToInterface(resp.Body)
 		if err != nil {
-			fmt.Println(err)
+			return nil, err
+		}
+		issues, _ := jsonWalker("issues", obj)
+		issuesSlice, ok := issues.([]interface{})
+
+		if !ok {
+			issuesSlice = []interface{}{}
 		}
 
-	}
+		for _, v := range issuesSlice {
+			iss, err := ja.NewIssueFromIface(v)
+			if err == nil {
+				result = append(result, iss)
+			}
+			if err != nil {
+				fmt.Println(err)
+			}
 
+		}
+		i = len(result)
+		if i >= (int(obj.(map[string]interface{})["total"].(float64)) - 1) {
+			break
+		}
+	}
 	return result, nil
 }
 
